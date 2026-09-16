@@ -1,0 +1,79 @@
+name: Bootstrap Mega Cinema
+
+on:
+  push:
+    paths:
+      - '.github/workflows/bootstrap-mega-cinema.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Mirror current site
+        run: |
+          set -e
+          rm -rf /tmp/mega-cinema-site
+          mkdir -p /tmp/mega-cinema-site
+          wget \
+            --mirror \
+            --page-requisites \
+            --convert-links \
+            --adjust-extension \
+            --no-host-directories \
+            --directory-prefix=/tmp/mega-cinema-site \
+            --domains=megafilmeshd.pages.dev \
+            https://megafilmeshd.pages.dev/ || true
+
+          find . -mindepth 1 -maxdepth 1 ! -name '.git' ! -name '.github' -exec rm -rf {} +
+          cp -a /tmp/mega-cinema-site/. .
+
+      - name: Convert branding and domain
+        shell: python
+        run: |
+          from pathlib import Path
+
+          replacements = [
+              ('https://megafilmeshd.pages.dev', 'https://mega-cinema.github.io'),
+              ('megafilmeshd.pages.dev', 'mega-cinema.github.io'),
+              ('Mega Filmes HD', 'Mega Cinema'),
+              ('MEGA FILMES HD', 'MEGA CINEMA'),
+              ('MegaFilmesHD', 'MegaCinema'),
+          ]
+
+          text_exts = {'.html', '.xml', '.json', '.txt', '.js', '.css', '.md'}
+          for p in Path('.').rglob('*'):
+              if not p.is_file() or '.git' in p.parts or '.github' in p.parts:
+                  continue
+              if p.suffix.lower() not in text_exts and p.name not in {'robots.txt'}:
+                  continue
+              try:
+                  txt = p.read_text(encoding='utf-8')
+              except Exception:
+                  continue
+              out = txt
+              for old, new in replacements:
+                  out = out.replace(old, new)
+              if out != txt:
+                  p.write_text(out, encoding='utf-8')
+
+          Path('.nojekyll').write_text('', encoding='utf-8')
+          Path('README.md').write_text('''# Mega Cinema\n\nSite oficial publicado via GitHub Pages.\n\nURL: https://mega-cinema.github.io/\n''', encoding='utf-8')
+
+      - name: Commit mirrored site
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "Publica Mega Cinema no GitHub Pages"
+          git push
