@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://mega-cinema.github.io/sitemap.xml
+# Feed de novidades: https://mega-cinema.github.io/feed.xml
