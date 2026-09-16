@@ -1,0 +1,86 @@
+name: Fix Mega Cinema branding and SEO
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-mega-cinema-branding.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Apply fixes
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          VERIFY = '<meta name="google-site-verification" content="uGca2mjjCFMkPfjUXNAnVc-dFt-NxyPNsiSuGd_6cLo" />'
+          WHOS = '<script id="_waus7o">var _wau = _wau || []; _wau.push(["small", "mb2fbsbmp8", "s7o"]);</script><script async src="//waust.at/s.js"></script>'
+
+          def fix_logo(html):
+              pat = re.compile(r'(<a\b(?=[^>]*\bclass=["\'][^"\']*\blogo\b[^"\']*["\'])[^>]*>)(.*?)(</a>)', re.I|re.S)
+              def repl(m):
+                  opening = m.group(1)
+                  if re.search(r'\bhref=["\'][^"\']*["\']', opening, flags=re.I):
+                      opening = re.sub(r'\bhref=["\'][^"\']*["\']', 'href="/"', opening, count=1, flags=re.I)
+                  else:
+                      opening = opening[:-1] + ' href="/">'
+                  return opening + 'MEGA <span>CINEMA</span>' + m.group(3)
+              return pat.sub(repl, html)
+
+          for p in Path('.').rglob('*.html'):
+              if '.git' in p.parts or '.github' in p.parts:
+                  continue
+              txt = p.read_text(encoding='utf-8', errors='ignore')
+              out = txt
+
+              # Brand text
+              out = out.replace('MEGA FILMES HD', 'MEGA CINEMA')
+              out = out.replace('Mega Filmes HD', 'Mega Cinema')
+              out = out.replace('MegaFilmesHD', 'MegaCinema')
+
+              # Header logo text + always link to home
+              out = fix_logo(out)
+
+              # Google Search Console verification: one exact tag per page
+              out = re.sub(r'<meta\b[^>]*name=["\']google-site-verification["\'][^>]*>\s*', '', out, flags=re.I)
+              if re.search(r'<head\b[^>]*>', out, flags=re.I):
+                  out = re.sub(r'(<head\b[^>]*>)', r'\1' + VERIFY, out, count=1, flags=re.I)
+
+              # Remove any old whos.amung.us code, then add the new unique counter
+              out = re.sub(r'<script\b[^>]*id=["\']_wau[^"\']*["\'][^>]*>.*?</script>\s*', '', out, flags=re.I|re.S)
+              out = re.sub(r'<script\b[^>]*src=["\'](?:https?:)?//waust\.at/s\.js["\'][^>]*>\s*</script>\s*', '', out, flags=re.I|re.S)
+              if re.search(r'</body>', out, flags=re.I):
+                  out = re.sub(r'</body>', WHOS + '</body>', out, count=1, flags=re.I)
+              else:
+                  out += WHOS
+
+              # Home canonical must be the actual GitHub Pages root
+              if p.name == 'index.html' and p.parent == Path('.'):
+                  if re.search(r'<link\b[^>]*rel=["\']canonical["\'][^>]*>', out, flags=re.I):
+                      out = re.sub(r'<link\b[^>]*rel=["\']canonical["\'][^>]*>', '<link rel="canonical" href="https://mega-cinema.github.io/">', out, count=1, flags=re.I)
+                  else:
+                      out = re.sub(r'</head>', '<link rel="canonical" href="https://mega-cinema.github.io/"></head>', out, count=1, flags=re.I)
+
+              if out != txt:
+                  p.write_text(out, encoding='utf-8')
+
+      - name: Commit fixes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "Corrige logo, verificação Google e Whos do Mega Cinema"
+          git push
