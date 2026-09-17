@@ -1,0 +1,295 @@
+name: Add Resident Evil and The Fix
+
+on:
+  push:
+    paths:
+      - '.github/workflows/add-resident-evil-the-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update-catalog:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install parser
+        run: pip install beautifulsoup4
+
+      - name: Update Mega Cinema catalog
+        shell: python
+        run: |
+          from pathlib import Path
+          from bs4 import BeautifulSoup
+          import json, xml.etree.ElementTree as ET, re
+
+          ROOT = Path('.')
+          BASE = 'https://mega-cinema.github.io'
+
+          movies = {
+            'resident': {
+              'name':'Resident Evil',
+              'year':'2026',
+              'slug':'assistir-resident-evil-2026-online.html',
+              'poster':'resident-evil-2026.webp',
+              'short':'https://encurtaurl.pages.dev/resident-evil-2026',
+              'imdb':'https://www.imdb.com/pt/title/tt35538033/',
+              'source':'https://residentevilfilme.com.br/',
+              'source_name':'Site oficial Sony Pictures Brasil',
+              'genre':'Terror',
+              'genre_long':'Terror e ficção científica',
+              'release':'17 de setembro de 2026 no Brasil',
+              'runtime':'Duração não informada no site oficial consultado',
+              'director':'Zach Cregger',
+              'writers':'Zach Cregger e Shay Hatten',
+              'cast':'Austin Abrams, Zach Cherry, Kali Reis e Paul Walter Hauser',
+              'trailer':'M-WFfF2ETgk',
+              'synopsis':'Em uma nova história da franquia, Bryan, um entregador de suprimentos médicos, acaba envolvido sem perceber em uma corrida frenética pela sobrevivência durante uma noite aterrorizante que desmorona ao seu redor em meio ao caos.',
+              'slider':'Uma nova história da franquia dirigida por Zach Cregger, com Austin Abrams no centro de uma noite de sobrevivência e caos.',
+              'badge':'17 SET',
+            },
+            'fix': {
+              'name':'The Fix',
+              'year':'2026',
+              'slug':'assistir-the-fix-online.html',
+              'poster':'the-fix-2026.webp',
+              'short':'https://encurtaurl.pages.dev/the-fix-filme',
+              'imdb':'https://www.imdb.com/pt/title/tt9601292/',
+              'source':'https://www.rottentomatoes.com/m/the_fix_2026',
+              'source_name':'Rotten Tomatoes',
+              'genre':'Ação',
+              'genre_long':'Ação e suspense',
+              'release':'11 de setembro de 2026',
+              'runtime':'2h22min',
+              'director':'Guy Moshe',
+              'writers':'Guy Moshe, Mark Bacci e Ron Hutchinson',
+              'cast':'Zachary Levi, Liam Neeson e Quincy Isaiah',
+              'trailer':'bw4h74D2_Es',
+              'synopsis':'Depois que uma missão no Afeganistão termina de forma trágica, um grupo de ex-agentes da CIA, liderado por Tucker e orientado por Larry, entra no coração de Teerã em busca de redenção ao tentar realizar um resgate de alto risco.',
+              'slider':'Thriller de ação dirigido por Guy Moshe, com Zachary Levi e Liam Neeson em uma missão de alto risco.',
+              'badge':'11 SET',
+            }
+          }
+
+          def frag(soup, html):
+              return BeautifulSoup(html, 'html.parser').find()
+
+          def set_meta(soup, selector, value, attr='content'):
+              tag = soup.select_one(selector)
+              if tag:
+                  tag[attr] = value
+
+          def make_card(soup, d):
+              html = f'''<article class="poster-card"><a class="poster-link" href="{d['slug']}"><div class="poster-image"><img alt="Pôster de {d['name']} ({d['year']})" decoding="async" loading="lazy" src="{d['poster']}"/><span class="type">FILME</span></div><div class="poster-content"><h3>{d['name']}</h3><span class="card-button">ASSISTA AGORA</span></div></a></article>'''
+              return frag(soup, html)
+
+          def insert_card_after(soup, neighbor, d):
+              if soup.find('a', href=d['slug']):
+                  return
+              for art in soup.select('article.poster-card'):
+                  h = art.find('h3')
+                  if h and h.get_text(' ', strip=True) == neighbor:
+                      art.insert_after(make_card(soup, d))
+                      return
+              raise RuntimeError(f'Card vizinho não encontrado: {neighbor}')
+
+          def update_itemlists(soup):
+              for script in soup.find_all('script', {'type':'application/ld+json'}):
+                  raw = script.string or script.get_text()
+                  try:
+                      data = json.loads(raw)
+                  except Exception:
+                      continue
+                  changed = False
+                  def walk(obj):
+                      nonlocal changed
+                      if isinstance(obj, dict):
+                          if obj.get('@type') == 'ItemList' and isinstance(obj.get('itemListElement'), list):
+                              els = obj['itemListElement']
+                              names = [x.get('name') for x in els if isinstance(x, dict)]
+                              if 'Resident Evil' not in names:
+                                  item = {'@type':'ListItem','position':1,'name':'Resident Evil','url':f"{BASE}/{movies['resident']['slug']}"}
+                                  if 'A Queda 2: No Limite' in names and len(els) <= 10:
+                                      els.insert(names.index('A Queda 2: No Limite'), item); changed = True
+                                  elif 'Homem-Aranha: Um Novo Dia' in names:
+                                      els.insert(names.index('Homem-Aranha: Um Novo Dia')+1, item); changed = True
+                              names = [x.get('name') for x in els if isinstance(x, dict)]
+                              if 'The Fix' not in names and 'O Fim da Rua' in names:
+                                  item = {'@type':'ListItem','position':1,'name':'The Fix','url':f"{BASE}/{movies['fix']['slug']}"}
+                                  els.insert(names.index('O Fim da Rua')+1, item); changed = True
+                              for i, x in enumerate(els, 1):
+                                  if isinstance(x, dict): x['position'] = i
+                          for v in obj.values(): walk(v)
+                      elif isinstance(obj, list):
+                          for v in obj: walk(v)
+                  walk(data)
+                  if changed:
+                      script.string = json.dumps(data, ensure_ascii=False, indent=2)
+
+          def add_slider_resident(soup):
+              track = soup.select_one('.aug-track')
+              if not track or track.find('a', href=movies['resident']['slug']):
+                  return
+              d = movies['resident']
+              html = f'''<article class="aug-slide"><a class="aug-slide-link" href="{d['slug']}"><div class="aug-poster-wrap"><img alt="Pôster de Resident Evil (2026)" decoding="async" loading="eager" src="{d['poster']}"/><span class="aug-badge">{d['badge']}</span></div><div class="aug-slide-copy"><span class="aug-kicker">Mega Cinema recomenda</span><h3>Resident Evil</h3><p>{d['slider']}</p><span class="aug-cta">ASSISTA AGORA</span></div></a></article>'''
+              target = None
+              for art in track.select('article.aug-slide'):
+                  h = art.find('h3')
+                  if h and h.get_text(' ',strip=True) == 'A Queda 2: No Limite': target = art; break
+              if target: target.insert_before(frag(soup, html))
+              else: track.insert(0, frag(soup, html))
+              slides = track.select('article.aug-slide')
+              total = len(slides)
+              for i, art in enumerate(slides):
+                  art['data-aug-slide'] = str(i)
+                  art['aria-label'] = f'{i+1} de {total}'
+
+          def update_catalog_page(path, slider=False):
+              p = ROOT/path
+              soup = BeautifulSoup(p.read_text(encoding='utf-8'), 'html.parser')
+              insert_card_after(soup, 'Homem-Aranha: Um Novo Dia', movies['resident'])
+              insert_card_after(soup, 'O Fim da Rua', movies['fix'])
+              if slider: add_slider_resident(soup)
+              update_itemlists(soup)
+              p.write_text(str(soup), encoding='utf-8')
+
+          def build_page(d):
+              template = BeautifulSoup((ROOT/'assistir-o-fim-da-rua-online.html').read_text(encoding='utf-8'), 'html.parser')
+              title = f"Assistir {d['name']} ({d['year']}) Online: Sinopse, Elenco e Trailer"
+              desc = f"Confira {d['name']} ({d['year']}): sinopse sem spoilers, elenco, trailer oficial, ficha técnica e opções para assistir online."
+              url = f"{BASE}/{d['slug']}"
+              image = f"{BASE}/{d['poster']}"
+              template.title.string = title
+              set_meta(template, 'meta[name="description"]', desc)
+              canonical = template.find('link', rel='canonical')
+              if canonical: canonical['href'] = url
+              set_meta(template, 'meta[property="og:title"]', title)
+              set_meta(template, 'meta[property="og:description"]', desc)
+              set_meta(template, 'meta[property="og:url"]', url)
+              set_meta(template, 'meta[property="og:image"]', image)
+              set_meta(template, 'meta[name="twitter:title"]', title)
+              set_meta(template, 'meta[name="twitter:description"]', desc)
+              set_meta(template, 'meta[name="twitter:image"]', image)
+
+              # Remove old structured data and add clean data for the new title.
+              for s in template.find_all('script', {'type':'application/ld+json'}): s.decompose()
+              faqs = [
+                (f'O que é {d["name"]} ({d["year"]})?', f'{d["name"]} é um filme de {d["genre_long"].lower()} dirigido por {d["director"]}.'),
+                (f'Quem está no elenco de {d["name"]}?', f'Entre os nomes do elenco estão {d["cast"]}.'),
+                (f'Quem dirige {d["name"]}?', f'A direção é de {d["director"]}.'),
+                (f'Quando {d["name"]} foi lançado?', d['release'] + '.'),
+                (f'Onde encontrar informações sobre {d["name"]}?', 'Esta página reúne sinopse, ficha técnica, trailer e links para fontes externas de referência.')
+              ]
+              ld = {
+                '@context':'https://schema.org','@graph':[
+                  {'@type':'Movie','@id':url+'#movie','name':d['name'],'dateCreated':d['year'],'image':image,'url':url,'description':d['synopsis'],'director':{'@type':'Person','name':d['director']},'actor':[{'@type':'Person','name':x.strip()} for x in d['cast'].replace(' e ', ', ').split(',') if x.strip()]},
+                  {'@type':'BreadcrumbList','itemListElement':[{'@type':'ListItem','position':1,'name':'Mega Cinema','item':BASE+'/'},{'@type':'ListItem','position':2,'name':d['name'],'item':url}]},
+                  {'@type':'FAQPage','mainEntity':[{'@type':'Question','name':q,'acceptedAnswer':{'@type':'Answer','text':a}} for q,a in faqs]}
+                ]
+              }
+              sc = template.new_tag('script', type='application/ld+json'); sc.string = json.dumps(ld, ensure_ascii=False, indent=2); template.head.append(sc)
+
+              # Header/breadcrumb home links.
+              for a in template.find_all('a'):
+                  if a.get_text(' ', strip=True) in {'Home','Início'}: a['href'] = '/'
+              poster = template.select_one('.hero .poster img')
+              if poster:
+                  poster['src']=d['poster']; poster['alt']=f"Pôster de {d['name']} ({d['year']})"; poster['loading']='eager'; poster['width']='640'; poster['height']='960'
+              crumb = template.select_one('.breadcrumb span')
+              if crumb: crumb.string = d['name']
+              badges = template.select_one('.badges')
+              if badges:
+                  badges.clear()
+                  for text, red in [('Filme',True),(d['year'],False),(d['genre_long'],False)]:
+                      sp=template.new_tag('span'); sp['class']=['badge']+(['red'] if red else []); sp.string=text; badges.append(sp)
+              h1 = template.select_one('.hero-copy h1')
+              if h1: h1.string = title
+              lead = template.select_one('.hero-copy .lead')
+              if lead: lead.string = d['synopsis'] + ' A página reúne dados revisados, trailer e fontes de referência.'
+              watch = template.select_one('.site-watch-btn')
+              if watch: watch['href'] = d['short']
+              ghost = template.select_one('.ghost-btn')
+              if ghost: ghost['href'] = '#trailer'
+              facts = template.select_one('.facts')
+              if facts:
+                  facts.clear()
+                  for label,value in [('Lançamento',d['release']),('Duração',d['runtime']),('Direção',d['director'])]:
+                      facts.append(frag(template, f'<div class="fact"><small>{label}</small><strong>{value}</strong></div>'))
+
+              main = template.find('main')
+              main.clear()
+              faq_html = ''.join([f'<div class="faq-item"><details><summary>{q}</summary><p>{a}</p></details></div>' for q,a in faqs])
+              sections = f'''
+              <section class="section editorial-section"><span class="eyebrow">Informações verificadas</span><h2>Ficha técnica de {d['name']}</h2><p class="section-intro">Informações revisadas em setembro de 2026 com base nas fontes indicadas nesta página.</p><div class="verified-grid"><article class="verified-card"><small>Formato</small><strong>Filme</strong></article><article class="verified-card"><small>Ano</small><strong>{d['year']}</strong></article><article class="verified-card"><small>Gênero</small><strong>{d['genre_long']}</strong></article><article class="verified-card"><small>Direção</small><strong>{d['director']}</strong></article></div><h3>Sinopse sem spoilers</h3><p>{d['synopsis']}</p></section>
+              <section class="section" id="trailer"><span class="eyebrow">Trailer oficial</span><h2>Trailer de {d['name']}</h2><div class="trailer-box"><iframe src="https://www.youtube.com/embed/{d['trailer']}" title="Trailer oficial de {d['name']}" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe></div></section>
+              <section class="section"><span class="eyebrow">Detalhes</span><h2>Elenco e informações técnicas</h2><ul class="tech-list"><li><span>Direção</span><strong>{d['director']}</strong></li><li><span>Roteiro</span><strong>{d['writers']}</strong></li><li><span>Elenco em destaque</span><strong>{d['cast']}</strong></li><li><span>Lançamento</span><strong>{d['release']}</strong></li><li><span>Duração</span><strong>{d['runtime']}</strong></li><li><span>Gênero</span><strong>{d['genre_long']}</strong></li></ul><h3>Fontes</h3><p><a href="{d['source']}" target="_blank" rel="noopener">{d['source_name']}</a> · <a href="{d['imdb']}" target="_blank" rel="noopener">IMDb</a></p></section>
+              <section class="section"><span class="eyebrow">Perguntas frequentes</span><h2>FAQ sobre {d['name']}</h2>{faq_html}</section>
+              <section class="section"><span class="eyebrow">Veja também</span><h2>Mais destaques no Mega Cinema</h2><div class="related-grid"><a href="assistir-homem-aranha-um-novo-dia-dublado-online.html"><span>Filme</span><strong>Homem-Aranha: Um Novo Dia</strong></a><a href="assistir-a-queda-2-filme-completo-online.html"><span>Filme</span><strong>A Queda 2: No Limite</strong></a><a href="assistir-o-fim-da-rua-online.html"><span>Filme</span><strong>O Fim da Rua</strong></a></div><div class="callout"><p><strong>Quer assistir {d['name']}?</strong><br>Use uma das opções de acesso disponíveis nesta página.</p><a class="watch-btn" href="{d['short']}" target="_blank" rel="nofollow noopener">ASSISTA AGORA</a></div></section>
+              '''
+              piece = BeautifulSoup(sections, 'html.parser')
+              for node in list(piece.contents): main.append(node)
+              return str(template)
+
+          # Create/update title pages first.
+          for d in movies.values():
+              (ROOT/d['slug']).write_text(build_page(d), encoding='utf-8')
+
+          # Home and catalog ordering.
+          update_catalog_page('index.html', slider=True)
+          update_catalog_page('filmes-e-series.html', slider=False)
+
+          # Sitemap XML.
+          sx = ROOT/'sitemap.xml'
+          tree = ET.parse(sx); root = tree.getroot(); ns = root.tag.split('}')[0].strip('{') if '}' in root.tag else ''
+          tag = (lambda n: f'{{{ns}}}{n}' if ns else n)
+          existing = {el.text for el in root.iter(tag('loc')) if el.text}
+          for d in movies.values():
+              u = f"{BASE}/{d['slug']}"
+              if u not in existing:
+                  entry = ET.SubElement(root, tag('url')); ET.SubElement(entry, tag('loc')).text = u
+          tree.write(sx, encoding='utf-8', xml_declaration=True)
+
+          # Sitemap HTML.
+          sh = ROOT/'sitemap.html'; soup = BeautifulSoup(sh.read_text(encoding='utf-8'),'html.parser')
+          container = soup.find('ul') or soup.find('main') or soup.body
+          for d in movies.values():
+              if not soup.find('a', href=d['slug']):
+                  if container.name == 'ul':
+                      li=soup.new_tag('li'); a=soup.new_tag('a', href=d['slug']); a.string=d['name']; li.append(a); container.append(li)
+                  else:
+                      a=soup.new_tag('a', href=d['slug']); a.string=d['name']; container.append(a)
+          sh.write_text(str(soup), encoding='utf-8')
+
+          # Fix Home/Início links in all HTML without touching title cards.
+          for p in ROOT.rglob('*.html'):
+              s = BeautifulSoup(p.read_text(encoding='utf-8'), 'html.parser')
+              changed=False
+              for a in s.find_all('a'):
+                  if a.get_text(' ',strip=True) in {'Home','Início'} and a.get('href') != '/':
+                      a['href']='/'; changed=True
+              if changed: p.write_text(str(s),encoding='utf-8')
+
+          # Final validations.
+          home=(ROOT/'index.html').read_text(encoding='utf-8')
+          assert home.index('assistir-resident-evil-2026-online.html') < home.index('assistir-a-queda-2-filme-completo-online.html')
+          assert 'assistir-the-fix-online.html' in home
+          assert (ROOT/'resident-evil-2026.webp').exists()
+          assert (ROOT/'the-fix-2026.webp').exists()
+          for d in movies.values():
+              page=(ROOT/d['slug']).read_text(encoding='utf-8')
+              assert d['short'] in page and d['poster'] in page and d['trailer'] in page
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git commit -m "Adiciona Resident Evil e The Fix ao Mega Cinema"
+          git push
