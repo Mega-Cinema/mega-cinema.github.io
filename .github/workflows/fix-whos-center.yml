@@ -1,0 +1,89 @@
+name: Fix Whos Online Center
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-whos-center.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Centralizar Whos Online em todas as páginas
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          widget = '<div class="whos-online"><script id="_waus7o">var _wau = _wau || []; _wau.push(["small", "mb2fbsbmp8", "s7o"]);</script><script async src="//waust.at/s.js"></script></div>'
+          css = '.whos-online{display:flex!important;justify-content:center!important;align-items:center!important;width:100%!important;margin:22px auto 0!important;min-height:18px;opacity:.75;text-align:center!important}.whos-online>*{margin-left:auto!important;margin-right:auto!important}'
+
+          changed = 0
+          for p in Path('.').rglob('*.html'):
+              s = p.read_text(encoding='utf-8', errors='ignore')
+              old = s
+
+              # Remove scripts do contador que estejam soltos fora do rodapé.
+              s = re.sub(
+                  r'<script[^>]*id=["\']_wau[^"\']*["\'][^>]*>[\s\S]*?</script>\s*<script[^>]*src=["\']//waust\.at/s\.js["\'][^>]*></script>',
+                  '',
+                  s,
+                  flags=re.I
+              )
+
+              # Remove qualquer container antigo do Whos.
+              s = re.sub(
+                  r'<div[^>]*class=["\'][^"\']*\bwhos-online\b[^"\']*["\'][^>]*>[\s\S]*?</div>',
+                  '',
+                  s,
+                  flags=re.I
+              )
+
+              # Centralização.
+              if re.search(r'\.whos-online\s*\{[^}]*\}', s, flags=re.I):
+                  s = re.sub(r'\.whos-online\s*\{[^}]*\}', css, s, flags=re.I)
+              else:
+                  s = re.sub(r'</head>', f'<style id="whos-online-center-css">{css}</style></head>', s, count=1, flags=re.I)
+
+              # Insere o contador DENTRO do footer, como no Mega Filmes HD.
+              if re.search(r'</footer>', s, flags=re.I):
+                  s = re.sub(r'</footer>', widget + '</footer>', s, count=1, flags=re.I)
+
+              if s != old:
+                  p.write_text(s, encoding='utf-8')
+                  changed += 1
+
+          print(f'Páginas corrigidas: {changed}')
+
+      - name: Validar
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          errors=[]
+          for p in Path('.').rglob('*.html'):
+              s=p.read_text(encoding='utf-8',errors='ignore')
+              if '</footer>' in s and '_waus7o' in s:
+                  footer=s.rsplit('</footer>',1)[0]
+                  if '<div class="whos-online">' not in footer[-1000:]:
+                      errors.append(str(p))
+          if errors:
+              raise SystemExit('Whos fora do footer: ' + ', '.join(errors))
+          print('Validação OK')
+
+      - name: Commit e publicar
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add '*.html' '**/*.html'
+          if git diff --cached --quiet; then
+            echo "Sem alterações."
+            exit 0
+          fi
+          git commit -m "Centraliza Whos Online no rodapé"
+          git push
